@@ -28,8 +28,8 @@
 #include <gcr/gcr.h>
 #include <JavaScriptCore/JavaScript.h>
 #include <webkit2/webkit2.h>
-#include <X11/X.h>
-#include <X11/Xatom.h>
+#include <wayland-client.h>
+#include <gdk/gdkwayland.h>
 #include <glib.h>
 
 #include "arg.h"
@@ -38,7 +38,6 @@
 #define LENGTH(x)               (sizeof(x) / sizeof(x[0]))
 #define CLEANMASK(mask)         (mask & (MODKEY|GDK_SHIFT_MASK))
 
-enum { AtomFind, AtomGo, AtomUri, AtomUTF8, AtomLast };
 
 enum {
 	OnDoc   = WEBKIT_HIT_TEST_RESULT_CONTEXT_DOCUMENT,
@@ -107,7 +106,8 @@ typedef struct Client {
 	WebKitHitTestResult *mousepos;
 	GTlsCertificate *cert, *failedcert;
 	GTlsCertificateFlags tlserr;
-	Window xid;
+	// Window xid;
+	struct wl_surface *xid;
 	guint64 pageid;
 	int progress, fullscreen, https, insecure, errorpage;
 	const char *title, *overtitle, *targeturi;
@@ -157,8 +157,6 @@ static const char *getcurrentuserhomedir(void);
 static Client *newclient(Client *c);
 static void loaduri(Client *c, const Arg *a);
 static const char *geturi(Client *c);
-static void setatom(Client *c, int a, const char *v);
-static const char *getatom(Client *c, int a);
 static void updatetitle(Client *c);
 static void gettogglestats(Client *c);
 static void getpagestats(Client *c);
@@ -245,11 +243,10 @@ static void clickexternplayer(Client *c, const Arg *a, WebKitHitTestResult *h);
 static char winid[64];
 static char togglestats[11];
 static char pagestats[2];
-static Atom atoms[AtomLast];
 static Window embed;
 static int showxid;
 static int cookiepolicy;
-static Display *dpy;
+static struct wl_display *dpy;
 static Client *clients;
 static GdkDevice *gdkkb;
 static char *stylefile;
@@ -334,14 +331,8 @@ setup(void)
 	if (signal(SIGHUP, sighup) == SIG_ERR)
 		die("Can't install SIGHUP handler");
 
-	if (!(dpy = XOpenDisplay(NULL)))
-		die("Can't open default display");
-
-	/* atoms */
-	atoms[AtomFind] = XInternAtom(dpy, "_SURF_FIND", False);
-	atoms[AtomGo] = XInternAtom(dpy, "_SURF_GO", False);
-	atoms[AtomUri] = XInternAtom(dpy, "_SURF_URI", False);
-	atoms[AtomUTF8] = XInternAtom(dpy, "UTF8_STRING", False);
+	if (!(dpy = wl_display_connect(NULL)))
+		die("Can't open default Wayland display");
 
 	gtk_init(NULL, NULL);
 
@@ -585,7 +576,7 @@ loaduri(Client *c, const Arg *a)
 			free(apath);
 	}
 
-	setatom(c, AtomUri, url);
+	// setatom(c, AtomUri, url);
 
 	if (strcmp(url, geturi(c)) == 0) {
 		reload(c, a);
@@ -605,37 +596,6 @@ geturi(Client *c)
 	if (!(uri = webkit_web_view_get_uri(c->view)))
 		uri = "about:blank";
 	return uri;
-}
-
-void
-setatom(Client *c, int a, const char *v)
-{
-	XChangeProperty(dpy, c->xid,
-	                atoms[a], atoms[AtomUTF8], 8, PropModeReplace,
-	                (unsigned char *)v, strlen(v) + 1);
-	XSync(dpy, False);
-}
-
-const char *
-getatom(Client *c, int a)
-{
-	static char buf[BUFSIZ];
-	Atom adummy;
-	int idummy;
-	unsigned long ldummy;
-	unsigned char *p = NULL;
-
-	XSync(dpy, False);
-	XGetWindowProperty(dpy, c->xid,
-	                   atoms[a], 0L, BUFSIZ, False, atoms[AtomUTF8],
-	                   &adummy, &idummy, &ldummy, &ldummy, &p);
-	if (p)
-		strncpy(buf, (char *)p, LENGTH(buf) - 1);
-	else
-		buf[0] = '\0';
-	XFree(p);
-
-	return buf;
 }
 
 void
@@ -979,7 +939,7 @@ evalscript(Client *c, const char *jsstr, ...)
 void
 updatewinid(Client *c)
 {
-	snprintf(winid, LENGTH(winid), "%lu", c->xid);
+	// snprintf(winid, LENGTH(winid), "%lu", c->xid);
 }
 
 void
@@ -1090,7 +1050,7 @@ cleanup(void)
 	g_free(scriptfile);
 	g_free(stylefile);
 	g_free(cachedir);
-	XCloseDisplay(dpy);
+	wl_display_disconnect(dpy);
 }
 
 WebKitWebView *
@@ -1238,7 +1198,7 @@ createview(WebKitWebView *v, WebKitNavigationAction *a, Client *c)
 	switch (webkit_navigation_action_get_navigation_type(a)) {
 	case WEBKIT_NAVIGATION_TYPE_OTHER: /* fallthrough */
 		/*
-		 * popup windows of type “other” are almost always triggered
+		 * popup windows of type "other" are almost always triggered
 		 * by user gesture, so inverse the logic here
 		 */
 /* instead of this, compare destination uri to mouse-over uri for validating window */
@@ -1289,16 +1249,16 @@ processx(GdkXEvent *e, GdkEvent *event, gpointer d)
 	if (((XEvent *)e)->type == PropertyNotify) {
 		ev = &((XEvent *)e)->xproperty;
 		if (ev->state == PropertyNewValue) {
-			if (ev->atom == atoms[AtomFind]) {
-				find(c, NULL);
-
-				return GDK_FILTER_REMOVE;
-			} else if (ev->atom == atoms[AtomGo]) {
-				a.v = getatom(c, AtomGo);
-				loaduri(c, &a);
-
-				return GDK_FILTER_REMOVE;
-			}
+			// if (ev->atom == atoms[AtomFind]) {
+			// 	find(c, NULL);
+			//
+			// 	return GDK_FILTER_REMOVE;
+			// } else if (ev->atom == atoms[AtomGo]) {
+			// 	// a.v = getatom(c, AtomGo);
+			// 	loaduri(c, &a);
+			//
+			// 	return GDK_FILTER_REMOVE;
+			// }
 		}
 	}
 	return GDK_FILTER_CONTINUE;
@@ -1361,7 +1321,7 @@ showview(WebKitWebView *v, Client *c)
 	gtk_widget_grab_focus(GTK_WIDGET(c->view));
 
 	gwin = gtk_widget_get_window(GTK_WIDGET(c->win));
-	c->xid = gdk_x11_window_get_xid(gwin);
+	c->xid = gdk_wayland_window_get_wl_surface(gwin);
 	updatewinid(c);
 	if (showxid) {
 		gdk_display_sync(gtk_widget_get_display(c->win));
@@ -1384,8 +1344,8 @@ showview(WebKitWebView *v, Client *c)
 		webkit_web_view_set_zoom_level(c->view,
 		                               curconfig[ZoomLevel].val.f);
 
-	setatom(c, AtomFind, "");
-	setatom(c, AtomUri, "about:blank");
+	// setatom(c, AtomFind, "");
+	// setatom(c, AtomUri, "about:blank");
 }
 
 GtkWidget *
@@ -1460,7 +1420,7 @@ loadfailedtls(WebKitWebView *v, gchar *uri, GTlsCertificate *cert,
 		    "Some error occurred validating the certificate.<br>");
 
 	g_object_get(cert, "certificate-pem", &pem, NULL);
-	html = g_strdup_printf("<p>Could not validate TLS for “%s”<br>%s</p>"
+	html = g_strdup_printf("<p>Could not validate TLS for \"%s\"<br>%s</p>"
 	                       "<p>You can inspect the following certificate "
 	                       "with Ctrl-t (default keybinding).</p>"
 	                       "<p><pre>%s</pre></p>", uri, errmsg->str, pem);
@@ -1480,7 +1440,7 @@ loadchanged(WebKitWebView *v, WebKitLoadEvent e, Client *c)
 
 	switch (e) {
 	case WEBKIT_LOAD_STARTED:
-		setatom(c, AtomUri, uri);
+		// setatom(c, AtomUri, uri);
 		c->title = uri;
 		c->https = c->insecure = 0;
 		seturiparameters(c, uri, loadtransient);
@@ -1490,12 +1450,12 @@ loadchanged(WebKitWebView *v, WebKitLoadEvent e, Client *c)
 			g_clear_object(&c->failedcert);
 		break;
 	case WEBKIT_LOAD_REDIRECTED:
-		setatom(c, AtomUri, uri);
+		// setatom(c, AtomUri, uri);
 		c->title = uri;
 		seturiparameters(c, uri, loadtransient);
 		break;
 	case WEBKIT_LOAD_COMMITTED:
-		setatom(c, AtomUri, uri);
+		// setatom(c, AtomUri, uri);
 		c->title = uri;
 		seturiparameters(c, uri, loadcommitted);
 		c->https = webkit_web_view_get_tls_info(c->view, &c->cert,
@@ -1666,7 +1626,7 @@ decidenewwindow(WebKitPolicyDecision *d, Client *c)
 	case WEBKIT_NAVIGATION_TYPE_RELOAD: /* fallthrough */
 	case WEBKIT_NAVIGATION_TYPE_FORM_RESUBMITTED:
 		/* Filter domains here */
-/* If the value of “mouse-button” is not 0, then the navigation was triggered by a mouse event.
+/* If the value of "mouse-button" is not 0, then the navigation was triggered by a mouse event.
  * test for link clicked but no button ? */
 		arg.v = webkit_uri_request_get_uri(
 		        webkit_navigation_action_get_request(a));
@@ -1944,7 +1904,8 @@ find(Client *c, const Arg *a)
 		else
 			webkit_find_controller_search_previous(c->finder);
 	} else {
-		s = getatom(c, AtomFind);
+		// s = getatom(c, AtomFind);
+		s = "";
 		f = webkit_find_controller_get_search_text(c->finder);
 
 		if (g_strcmp0(f, s) == 0) /* reset search */

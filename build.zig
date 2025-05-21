@@ -29,14 +29,13 @@ pub fn build(b: *std.Build) void {
         },
     });
     surf.linkSystemLibrary("gthread-2.0");
-    surf.linkSystemLibrary("x11");
+    // surf.linkSystemLibrary("x11");
+    surf.linkSystemLibrary("wayland-client");
     surf.linkSystemLibrary("gtk-3");
     surf.linkSystemLibrary("gcr-3");
-    surf.linkSystemLibrary("webkit2gtk-4.0");
+    surf.linkSystemLibrary("webkit2gtk-4.1");
     surf.linkLibC();
-
     surf.addIncludePath(b.path("."));
-
     b.installArtifact(surf);
 
     // webext-surf shared library
@@ -50,8 +49,8 @@ pub fn build(b: *std.Build) void {
         .file = b.path("src/webext-surf.c"),
         .flags = &.{"-fPIC"},
     });
-    webext.linkSystemLibrary("webkit2gtk-4.0");
-    webext.linkSystemLibrary("webkit2gtk-web-extension-4.0");
+    webext.linkSystemLibrary("webkit2gtk-4.1");
+    webext.linkSystemLibrary("webkit2gtk-web-extension-4.1");
     webext.linkSystemLibrary("gio-2.0");
     webext.addIncludePath(b.path("."));
     webext.linkLibC();
@@ -60,4 +59,9 @@ pub fn build(b: *std.Build) void {
     // Install man page
     // const man1 = b.addInstallFile(.{ .path = "surf.1" }, manprefix ++ "/man1/surf.1");
     // b.getInstallStep().dependOn(&man1.step);
+
+    // add run step
+    const run = b.step("run", "Run surf");
+    const surfRun = b.addRunArtifact(surf);
+    run.dependOn(&surfRun.step);
 }
